@@ -86,7 +86,7 @@ impl DynamicFactorizationsContext {
         }
     }
 
-    async fn factorizations_dynamic_parallel(&mut self, alpha: i32) -> Vec<Vec<i32>> {
+    async fn factorizations_dynamic_parallel(&mut self, alpha: i32) -> Vec<Vec<i32>> {  // Note: this is currently NOT actually parellel, it needs calls to tokio::spawn.
         //todo launch threads
                 if (alpha == 0) { return vec![vec![0;self.nsg.generators.len()]] } // zero is known to have exactly one factorization
         else if (alpha < 0) { return vec![] }   // negative elements have no factorizations
@@ -153,12 +153,21 @@ impl DynamicFactorizationsContext {
                 let roundResult = round.await;
                 let vec2 = roundResult.collect_vec();
                 // let vec22 = vec2.iter().map(|x| tokio::spawn(async move {return x;})); 
-                // println!("collecting futurees 1");
-                let vec3 = join_all(vec2).await;
-                                // println!("collecting futurees 2");
+                // println!("collecting futures 1");
+                // let vec3 = join_all(vec2).await;
+                let vec3h = vec2.iter().map(|x| tokio::spawn(*x)).collect_vec();
+                                // println!("collecting futures 2");
+                                let vec3hawait = join_all(vec3h).await;
 
-                let vec4 = join_all(vec3).await;
-                                // println!("collecting futurees 3");
+                // let vecHandles = vec3.iter().map(|x| tokio::spawn(x));
+                // let vec4 = join_all(vec3).await;
+                                // println!("collecting futures 3");
+                                let vec4h = vec3hawait.iter().map(|x| x.unwrap());
+
+                                let vec4hh = vec4h.map(|x| tokio::spawn(x));
+                                let vec4hhawait = join_all(vec4hh).await;
+                                let vec4hhunw = vec4hhawait.iter().map(|x| x.unwrap());
+                                let vec4 = vec4hhunw.collect_vec();
 
 
                 vec4.iter().enumerate().map(|(index, (element, result))| 
@@ -200,8 +209,8 @@ async fn main() {
     let mut context = DynamicFactorizationsContext{nsg:nsg.clone(), stored_factorizations: RwLock::new(HashMap::new())};
     let time: Instant = Instant::now();
     let facs: Vec<Vec<i32>> = context.factorizations_dynamic_parallel(demoElement).await;
-    let facs_mapped: Vec<_> = facs.iter().map(|x| format!("{:?}", x)).collect();
-    let facs_joined = facs_mapped.join(" ");
+    // let facs_mapped: Vec<_> = facs.iter().map(|x| format!("{:?}", x)).collect();
+    // let facs_joined = facs_mapped.join(" ");
     println!("time parallel: {} ms", time.elapsed().as_millis());
     println!("facs: {}", facs.len());//facs_joined);
 
