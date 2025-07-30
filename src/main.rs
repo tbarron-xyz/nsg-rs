@@ -1,3 +1,5 @@
+#![allow(non_snake_case)]
+
 // use recur_fn::{recur_fn, RecurFn};
 use std::collections::HashMap;
 use std::sync::RwLock;
@@ -25,7 +27,6 @@ fn isAllZeroesLeftOfIndex(vec: &Vec<i32>, indexArg: usize) -> bool {
     return vec.iter().enumerate().all(|(index, number)| 
         index >= indexArg || *number == 0);
 }
-
 
 impl DynamicFactorizationsContext {
     fn factorizations_best(&mut self, alpha: i32) -> Vec<Vec<i32>> {    // the fastest/best one.
@@ -86,7 +87,7 @@ impl DynamicFactorizationsContext {
         }
     }
 
-    async fn factorizations_dynamic_parallel(&mut self, alpha: i32) -> Vec<Vec<i32>> {  // Note: this is currently NOT actually parellel, it needs calls to tokio::spawn.
+    async fn factorizations_dynamic_parallel(&mut self, alpha: i32) -> Vec<Vec<i32>> {
         //todo launch threads
                 if (alpha == 0) { return vec![vec![0;self.nsg.generators.len()]] } // zero is known to have exactly one factorization
         else if (alpha < 0) { return vec![] }   // negative elements have no factorizations
@@ -100,28 +101,26 @@ impl DynamicFactorizationsContext {
                     None => return vec![]   // unreachable
                 }
             }
-        }
-            // let rounds00 = vec![];
-
-            
+        }            
             let cache = &self.stored_factorizations;
             let smallestGen = self.nsg.generators[0];
-            let gens = &self.nsg.generators.clone();
+            let gens1 = self.nsg.generators.clone();
+            // let gens = &gens1;
 
-            let rounds = ((0..=alpha).step_by(self.nsg.generators[0] as usize)).map(|baseElement| async move {
+            let rounds = ((0..=alpha).step_by(self.nsg.generators[0] as usize)).map(move |baseElement| /* async move  */{
                 // println!("baseElement: {}", baseElement);
                 // one round of each worker
                 let be2 = baseElement.clone();
-                let futures  =  (0..smallestGen).map(move |threadId| async move {
+                let gens2 = gens1.clone();
+                let futures  =  (0..smallestGen).map(move |threadId| /* async move */ {
                     // println!("threadId: {}", threadId);
                     // one worker
                     let tid = threadId.clone();
-                    // let c = cache.clone();
-                    return async move {
+                    let gens3 = gens2.clone();
+                    return /* async move */ move || {
                         let roundThreadElement = be2 + tid;
                         // println!("element: {}", roundThreadElement);
-                        let predecessors = gens.iter().map(|x| roundThreadElement - x).collect::<Vec<i32>>();
-                                                // println!("ps: {:?} {:?} {:?}", predecessors[0], predecessors[1], predecessors[2]);
+                        let predecessors = gens3.iter().map(|x| roundThreadElement - x).collect_vec();
 
                         let predecessor_facs = predecessors.iter().map(|p| DynamicFactorizationsContext::facs_dynamic_noMut(&(cache.read().unwrap()), *p,4)).collect_vec();
                         // println!("pfs: {}", predecessor_facs.iter().flatten().collect_vec().len());
@@ -141,36 +140,35 @@ impl DynamicFactorizationsContext {
                         .for_each(|x| result.push(x));
                     // println!("returning {} facs", result.len());
                     // println);
-                        // c.insert(alpha, result.clone());
                         return (roundThreadElement, result);
                     }
-                });
+                }).collect_vec();
                 return futures;
             });
         
             for (index, round) in rounds.enumerate() {
                 // println!("Round: {}", index);
-                let roundResult = round.await;
-                let vec2 = roundResult.collect_vec();
-                // let vec22 = vec2.iter().map(|x| tokio::spawn(async move {return x;})); 
-                // println!("collecting futures 1");
-                // let vec3 = join_all(vec2).await;
-                let vec3h = vec2.iter().map(|x| tokio::spawn(*x)).collect_vec();
-                                // println!("collecting futures 2");
-                                let vec3hawait = join_all(vec3h).await;
+                let roundFutures = round;//.await;
 
-                // let vecHandles = vec3.iter().map(|x| tokio::spawn(x));
-                // let vec4 = join_all(vec3).await;
-                                // println!("collecting futures 3");
-                                let vec4h = vec3hawait.iter().map(|x| x.unwrap());
+                // -- begin tokio section. this doesn't compile due to a lifetime error.
+                // let mut handles = vec![];
+                // for fut in roundFutures {
+                //     handles.push(tokio::spawn(async move {
+                //         let futResult = fut();//.await;//.await;
+                //         return futResult;
+                //     }));
+                // };
+                // let joined = join_all(handles).await;
+                // let mut results = vec![];
+                // for handle in joined {
+                //     results.push(handle.unwrap());
+                // }
+                // -- end tokio section
 
-                                let vec4hh = vec4h.map(|x| tokio::spawn(x));
-                                let vec4hhawait = join_all(vec4hh).await;
-                                let vec4hhunw = vec4hhawait.iter().map(|x| x.unwrap());
-                                let vec4 = vec4hhunw.collect_vec();
+                let results = roundFutures.iter().map(|f| f()).collect_vec();
 
 
-                vec4.iter().enumerate().map(|(index, (element, result))| 
+                results.iter().enumerate().map(|(index, (element, result))| 
                    {
                     // for v in result {
                     //     println!("{:?},{:?},{:?}",v[0], v[1], v[2]);
@@ -185,15 +183,8 @@ impl DynamicFactorizationsContext {
                     // println!("Got value back: {:?}", *getResult);
                    }
                 ).collect_vec();
-                                                // println!("inserted into map 3");
-
-                
             };
             return self.stored_factorizations.read().unwrap()[&alpha].clone();
-            // let result2 = join_all(rounds).await;
-            // result2.iter().map(|result| 
-            //         self.stored_factorizations.insert(alpha, result.clone())
-            //     );
         };
     }
 }
@@ -209,8 +200,8 @@ async fn main() {
     let mut context = DynamicFactorizationsContext{nsg:nsg.clone(), stored_factorizations: RwLock::new(HashMap::new())};
     let time: Instant = Instant::now();
     let facs: Vec<Vec<i32>> = context.factorizations_dynamic_parallel(demoElement).await;
-    // let facs_mapped: Vec<_> = facs.iter().map(|x| format!("{:?}", x)).collect();
-    // let facs_joined = facs_mapped.join(" ");
+    let facs_mapped: Vec<_> = facs.iter().map(|x| format!("{:?}", x)).collect();
+    let facs_joined = facs_mapped.join(" ");
     println!("time parallel: {} ms", time.elapsed().as_millis());
     println!("facs: {}", facs.len());//facs_joined);
 
