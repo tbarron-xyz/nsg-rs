@@ -1,6 +1,5 @@
 #![allow(non_snake_case)]
 
-use futures::future::join_all;
 use itertools::Itertools;
 use std::collections::HashMap;
 use std::sync::RwLock;
@@ -29,40 +28,10 @@ fn isAllZeroesLeftOfIndex(vec: &Vec<i32>, indexArg: usize) -> bool {
         .all(|(index, number)| index >= indexArg || *number == 0);
 }
 
-fn facs_dynamic_noMut<'b>(
-    cache: &'b HashMap<i32, Vec<Vec<i32>>>,
-    alpha: i32,
-    dim: usize,
-) -> Vec<Vec<i32>> {
-    // contract: only call if you know it's in the cache already.
-    if (alpha == 0) {
-        return vec![vec![0; dim]];
-    }
-    // zero is known to have exactly one factorization
-    else if (alpha < 0) {
-        return vec![];
-    }
-    // negative elements have no factorizations
-    else {
-        // println!("Getting cached facs for {}", alpha);
-        let stored = cache.get(&alpha);
-        if (stored != None) {
-            // println!("Got cached facs for {}", alpha);
-            match stored {
-                Some(x) => {
-                    return x.clone();
-                }
-                None => return vec![], // unreachable
-            }
-        }
-        return vec![]; // per contract, will not be reached
-    }
-}
-
 impl DynamicFactorizationsContext {
     fn factorizations_best(&mut self, alpha: i32) -> Vec<Vec<i32>> {
         // the fastest/best one.
-        return self.factorizations_dynamic_singleThread(alpha);
+        return self.factorizations_dynamic_parallel(alpha);
     }
     fn elementIsMember(&mut self, alpha: i32) -> bool {
         return !self.factorizations_best(alpha).is_empty();
@@ -122,8 +91,8 @@ impl DynamicFactorizationsContext {
         }
     }
 
-    fn facs_dynamic_noMut<'b>(
-        cache: &'b HashMap<i32, Vec<Vec<i32>>>,
+    fn facs_from_cache(
+        cache: &HashMap<i32, Vec<Vec<i32>>>,
         alpha: i32,
         dim: usize,
     ) -> Vec<Vec<i32>> {
@@ -171,7 +140,7 @@ impl DynamicFactorizationsContext {
         let predecessor_facs = predecessors
             .iter()
             .map(|p| {
-                DynamicFactorizationsContext::facs_dynamic_noMut(&(cache.read().unwrap()), *p, dim)
+                DynamicFactorizationsContext::facs_from_cache(&(cache.read().unwrap()), *p, dim)
             })
             .collect_vec();
         // println!("pfs: {}", predecessor_facs.iter().flatten().collect_vec().len());
@@ -197,7 +166,7 @@ impl DynamicFactorizationsContext {
         return (roundThreadElement, result);
     }
 
-    async fn factorizations_dynamic_parallel(&mut self, alpha: i32) -> Vec<Vec<i32>> {
+    fn factorizations_dynamic_parallel(&mut self, alpha: i32) -> Vec<Vec<i32>> {
         if (alpha == 0) {
             return vec![vec![0; self.nsg.generators.len()]];
         }
@@ -222,12 +191,8 @@ impl DynamicFactorizationsContext {
             let cache = &self.stored_factorizations;
             let smallestGen = self.nsg.generators[0];
             let gens1 = self.nsg.generators.clone();
-            let dim = self.nsg.dimension();
-            // let gens = &gens1;
-
-            // let mut res = vec![];
+            let dim: usize = self.nsg.dimension();
             for round in ((0..=alpha).step_by(self.nsg.generators[0] as usize)) {
-                // let rounds = ((0..=alpha).step_by(self.nsg.generators[0] as usize)).map(move |baseElement| /* async move  */ {
                 // println!("baseElement: {}", baseElement);
                 // one round of each worker
                 let baseElement = round;
@@ -290,24 +255,22 @@ fn increment_vector_along_axis(x: Vec<i32>, i: usize) -> Vec<i32> {
         .collect();
 }
 
-#[tokio::main(worker_threads = 8)]
-async fn main() {
+fn main() {
     let demoElement = 5000;
     let nsg = NumericalSemigroup {
         generators: vec![13, 33, 37],
     };
+    println!(
+        "Generators: {}, {}, {}; element: {}",
+        nsg.generators[0], nsg.generators[1], nsg.generators[2], demoElement
+    );
     let mut context = DynamicFactorizationsContext {
         nsg: nsg.clone(),
         stored_factorizations: RwLock::new(HashMap::new()),
     };
     let time: Instant = Instant::now();
     let facs;
-    {
-        // let facs: Vec<Vec<i32>>
-        facs = context.factorizations_dynamic_parallel(demoElement).await;
-    }
-    let facs_mapped: Vec<_> = facs.iter().map(|x| format!("{:?}", x)).collect();
-    let facs_joined = facs_mapped.join(" ");
+    facs = context.factorizations_dynamic_parallel(demoElement);
     println!("time parallel: {} ms", time.elapsed().as_millis());
     println!("facs: {}", facs.len()); //facs_joined);
     let mut context2 = DynamicFactorizationsContext {
